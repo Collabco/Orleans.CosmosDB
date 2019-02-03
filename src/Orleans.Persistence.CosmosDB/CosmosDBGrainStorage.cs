@@ -11,6 +11,7 @@ using Orleans.Runtime;
 using Orleans.Serialization;
 using Orleans.Storage;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -26,6 +27,10 @@ namespace Orleans.Persistence.CosmosDB
     /// Azure Cosmos DB storage Provider.
     /// Persist Grain State in a Cosmos DB collection.
     /// </summary>
+    /// <remarks>
+    /// Currently uses the grain type as a PartitionKey, and essentially the Grain ID String as an identifier within that partition.
+    /// The proposed change is to use the Grain ID String as a partition key, and 
+    /// </remarks>
     public class CosmosDBGrainStorage : IGrainStorage, ILifecycleParticipant<ISiloLifecycle>
     {
         private const string PARTITION_KEY = "/GrainType";
@@ -139,20 +144,25 @@ namespace Orleans.Persistence.CosmosDB
         public async Task ReadStateAsync(string grainType, GrainReference grainReference, IGrainState grainState)
         {
             if (this._dbClient == null) throw new ArgumentException("GrainState collection not initialized.");
-
-            string id = GetKeyString(grainReference);
+            
+            var partitionKey = GetPartitionKey(grainReference);
 
             if (this._logger.IsEnabled(LogLevel.Trace)) this._logger.Trace(
                 "Reading: GrainType={0} Key={1} Grainid={2} from Collection={3}",
-                grainType, id, grainReference, this._options.Collection);
+                grainType, partitionKey, grainReference, this._options.Collection);
 
             try
             {
-                var spResponse = await ExecuteWithRetries(() => this._dbClient.ExecuteStoredProcedureAsync<GrainStateEntity>(
+                var spResponse = await ExecuteWithRetries(() => this._dbClient.ExecuteStoredProcedureAsync<GrainStateEntity[]>(
                         UriFactory.CreateStoredProcedureUri(this._options.DB, this._options.Collection, READ_STATE_SPROC),
-                        new RequestOptions { PartitionKey = new PartitionKey(grainType) },
-                        grainType, id)).ConfigureAwait(false);
+                        new RequestOptions { PartitionKey = new PartitionKey(partitionKey) })).ConfigureAwait(false);
 
+                // 1. Initialize the State
+                var stateType = grainState.State.GetType();
+                
+
+
+                /*
                 if (spResponse.Response?.State != null)
                 {
                     grainState.State = JsonConvert.DeserializeObject(spResponse.Response.State.ToString(), grainState.State.GetType(), _options.JsonSerializerSettings);
@@ -162,7 +172,7 @@ namespace Orleans.Persistence.CosmosDB
                 {
                     // Default state, to prevent null reference exceptions when the grain is first activated
                     grainState.State = Activator.CreateInstance(grainState.State.GetType());
-                }
+                }*/
             }
             catch (DocumentClientException dce)
             {
@@ -173,12 +183,12 @@ namespace Orleans.Persistence.CosmosDB
                     return;
                 }
 
-                this._logger.LogError(dce, $"Failure reading state for Grain Type {grainType} with Id {id}.");
+                this._logger.LogError(dce, $"Failure reading state for Grain Type {grainType} with PartitionKey {partitionKey}.");
                 throw dce;
             }
             catch (Exception exc)
             {
-                this._logger.LogError(exc, $"Failure reading state for Grain Type {grainType} with Id {id}.");
+                this._logger.LogError(exc, $"Failure reading state for Grain Type {grainType} with PartitionKey {partitionKey}.");
                 throw;
             }
         }
@@ -187,34 +197,34 @@ namespace Orleans.Persistence.CosmosDB
         {
             if (this._dbClient == null) throw new ArgumentException("GrainState collection not initialized.");
 
-            string id = GetKeyString(grainReference);
+            var partitionKey = GetPartitionKey(grainReference);
 
             if (this._logger.IsEnabled(LogLevel.Trace)) this._logger.Trace(
-                "Writing: GrainType={0} Key={1} Grainid={2} ETag={3} from Collection={4}",
-                grainType, id, grainReference, grainState.ETag, this._options.Collection);
+                "Writing: GrainType={0} Key={partitionKey} Grainid={2} ETag={3} from Collection={4}",
+                grainType, partitionKey, grainReference, grainState.ETag, this._options.Collection);
 
             try
             {
-                var entity = new GrainStateEntity
-                {
-                    ETag = grainState.ETag,
-                    Id = id,
-                    GrainType = grainType,
-                    State = grainState.State
-                };
+                //var entity = new GrainStateEntity
+                //{
+                //    ETag = grainState.ETag,
+                //    Id = id,
+                //    GrainType = grainType,
+                //    State = grainState.State
+                //};
 
-                var entityString = JsonConvert.SerializeObject(entity, this._options.JsonSerializerSettings);
+                //var entityString = JsonConvert.SerializeObject(entity, this._options.JsonSerializerSettings);
 
-                var spResponse = await ExecuteWithRetries(() => this._dbClient.ExecuteStoredProcedureAsync<string>(
-                       UriFactory.CreateStoredProcedureUri(this._options.DB, this._options.Collection, WRITE_STATE_SPROC),
-                       new RequestOptions { PartitionKey = new PartitionKey(grainType) },
-                       entityString)).ConfigureAwait(false);
+                //var spResponse = await ExecuteWithRetries(() => this._dbClient.ExecuteStoredProcedureAsync<string>(
+                //       UriFactory.CreateStoredProcedureUri(this._options.DB, this._options.Collection, WRITE_STATE_SPROC),
+                //       new RequestOptions { PartitionKey = new PartitionKey(grainType) },
+                //       entityString)).ConfigureAwait(false);
 
-                grainState.ETag = spResponse.Response;
+                //grainState.ETag = spResponse.Response;
             }
             catch (Exception exc)
             {
-                this._logger.LogError(exc, $"Failure writing state for Grain Type {grainType} with Id {id}.");
+                this._logger.LogError(exc, $"Failure writing state for Grain Type {grainType} with PartitionKey {partitionKey}.");
                 throw;
             }
         }
@@ -223,30 +233,30 @@ namespace Orleans.Persistence.CosmosDB
         {
             if (this._dbClient == null) throw new ArgumentException("GrainState collection not initialized.");
 
-            string id = GetKeyString(grainReference);
+            var partitionKey = GetPartitionKey(grainReference);
 
             if (this._logger.IsEnabled(LogLevel.Trace)) this._logger.Trace(
-                "Clearing: GrainType={0} Key={1} Grainid={2} ETag={3} DeleteStateOnClear={4} from Collection={4}",
-                grainType, id, grainReference, grainState.ETag, this._options.DeleteStateOnClear, this._options.Collection);
+                "Clearing: GrainType={0} PartitionKey={1} Grainid={2} ETag={3} DeleteStateOnClear={4} from Collection={4}",
+                grainType, partitionKey, grainReference, grainState.ETag, this._options.DeleteStateOnClear, this._options.Collection);
 
             try
             {
                 var spResponse = await ExecuteWithRetries(() => this._dbClient.ExecuteStoredProcedureAsync<string>(
                         UriFactory.CreateStoredProcedureUri(this._options.DB, this._options.Collection, CLEAR_STATE_SPROC),
                         new RequestOptions { PartitionKey = new PartitionKey(grainType) },
-                        grainType, id, grainState.ETag, this._options.DeleteStateOnClear)).ConfigureAwait(false);
+                        grainType, partitionKey, grainState.ETag, this._options.DeleteStateOnClear)).ConfigureAwait(false);
 
                 grainState.ETag = spResponse.Response;
             }
             catch (Exception exc)
             {
-                this._logger.LogError(exc, $"Failure clearing state for Grain Type {grainType} with Id {id}.");
+                this._logger.LogError(exc, $"Failure clearing state for Grain Type {grainType} with PartitionKey {partitionKey}.");
                 throw;
             }
         }
 
         // This method is invoked via "dynamic" by Orleans.Indexing. A future interface may be designed for this.
-        public async Task<List<GrainReference>> LookupAsync<K>(string grainType, string indexedField, K key)
+        /*public async Task<List<GrainReference>> LookupAsync<K>(string grainType, string indexedField, K key)
         {
             if (this._dbClient == null) throw new ArgumentException("GrainState collection not initialized.");
 
@@ -276,7 +286,7 @@ namespace Orleans.Persistence.CosmosDB
                 throw;
             }
         }
-
+        */
         public Task Close(CancellationToken ct)
         {
             this._dbClient.Dispose();
@@ -306,30 +316,8 @@ namespace Orleans.Persistence.CosmosDB
         }
 
         private const string KeyStringSeparator = "__";
-        private string GetKeyString(GrainReference grainReference) => $"{this._serviceId}{KeyStringSeparator}{grainReference.ToKeyString()}";
-        private string GetGrainReferenceString(string keyString) => keyString.Substring(keyString.IndexOf(KeyStringSeparator) + KeyStringSeparator.Length);
-
-        private static bool IsNumericType(Type o)
-        {
-            switch (Type.GetTypeCode(o))
-            {
-                case TypeCode.Byte:
-                case TypeCode.SByte:
-                case TypeCode.UInt16:
-                case TypeCode.UInt32:
-                case TypeCode.UInt64:
-                case TypeCode.Int16:
-                case TypeCode.Int32:
-                case TypeCode.Int64:
-                case TypeCode.Decimal:
-                case TypeCode.Double:
-                case TypeCode.Single:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
+        private string GetPartitionKey(GrainReference grainReference) => $"{this._serviceId}{KeyStringSeparator}{grainReference.ToKeyString()}";
+        
         private async Task TryCreateCosmosDBResources()
         {
             var dbResponse = await this._dbClient.CreateDatabaseIfNotExistsAsync(new Database { Id = this._options.DB });

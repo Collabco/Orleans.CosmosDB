@@ -7,6 +7,7 @@ namespace Orleans.Persistence.CosmosDB.Models
         private const string ID_FIELD = "id";
         private const string ETAG_FIELD = "_etag";
 
+        // The top-level property name
         [JsonProperty(ID_FIELD)]
         public string Id { get; set; }
         

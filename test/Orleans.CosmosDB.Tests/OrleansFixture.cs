@@ -43,7 +43,7 @@ namespace Orleans.CosmosDB.Tests
                 .UseDevelopmentClustering(options => options.PrimarySiloEndpoint = clusterConfig.PrimaryNode)
                 .ConfigureEndpoints(siloAddress, siloPort, gatewayPort)
                 //.UseConfiguration(clusterConfig)
-                .ConfigureApplicationParts(pm => pm.AddApplicationPart(typeof(PersistenceTests).Assembly))
+                //.ConfigureApplicationParts(pm => pm.AddApplicationPart(typeof(PersistenceTests).Assembly))
                 .Build();
             silo.StartAsync().Wait();
             this.Silo = silo;
@@ -59,7 +59,7 @@ namespace Orleans.CosmosDB.Tests
                     options.ServiceId = serviceId;
                 })
                 .UseStaticClustering(options => options.Gateways = new List<Uri> { new IPEndPoint(siloAddress, gatewayPort).ToGatewayUri() })
-                .ConfigureApplicationParts(pm => pm.AddApplicationPart(typeof(PersistenceTests).Assembly))
+                //.ConfigureApplicationParts(pm => pm.AddApplicationPart(typeof(PersistenceTests).Assembly))
                 .Build();
 
             client.Connect().Wait();

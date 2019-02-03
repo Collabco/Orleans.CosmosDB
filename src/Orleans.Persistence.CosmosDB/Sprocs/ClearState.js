@@ -6,7 +6,7 @@ function ClearState(grainType, id, eTag, isDelete) {
   if (!grainType) throw new Error('grainType is required');
   if (!id) throw new Error('id is required');
 
-  var query = 'SELECT * FROM c WHERE c.GrainType = "' + grainType + '" AND c.id = "' + id + '"';
+  var query = 'SELECT * FROM c WHERE c.GrainType = "' + grainType;
   var accept = collection.queryDocuments(collection.getSelfLink(), query, {},
     function (err, docs, responseOptions) {
       if (err) throw new Error("Error: " + err.message);
